@@ -1,5 +1,16 @@
 import type { Env, Project, Scene, CreateProjectRequest, ApiResponse, VideoJobState } from './types';
 import { VideoJob } from './durable-objects/VideoJob';
+import { getAuthFromRequest, requireAuth, type AuthContext } from './auth';
+import {
+  handleSignup,
+  handleLogin,
+  handleRefresh,
+  handleLogout,
+  handleGetMe,
+  handleGetSettings,
+  handleSaveSettings,
+  handleDeleteSetting,
+} from './routes';
 
 // Export Durable Object class
 export { VideoJob };
@@ -45,15 +56,76 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   try {
-    // Health check
+    // Health check (public)
     if (path === '/api/health') {
       return jsonResponse({ success: true, data: { status: 'ok', version: '1.0.0' } });
     }
 
-    // === PROJECT ENDPOINTS ===
+    // ==================== AUTH ROUTES (Public) ====================
+
+    // Signup
+    if (path === '/api/auth/signup' && method === 'POST') {
+      return handleSignup(request, env);
+    }
+
+    // Login
+    if (path === '/api/auth/login' && method === 'POST') {
+      return handleLogin(request, env);
+    }
+
+    // Refresh token
+    if (path === '/api/auth/refresh' && method === 'POST') {
+      return handleRefresh(request, env);
+    }
+
+    // Logout
+    if (path === '/api/auth/logout' && method === 'POST') {
+      return handleLogout(request, env);
+    }
+
+    // ==================== PROTECTED ROUTES ====================
+
+    // Get auth context for protected routes
+    const auth = await getAuthFromRequest(request, env.JWT_SECRET);
+
+    // Get current user
+    if (path === '/api/auth/me' && method === 'GET') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+      return handleGetMe(env, auth!.userId);
+    }
+
+    // ==================== SETTINGS ROUTES (Protected) ====================
+
+    // Get settings
+    if (path === '/api/settings' && method === 'GET') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+      return handleGetSettings(env, auth!.userId);
+    }
+
+    // Save settings
+    if (path === '/api/settings' && method === 'PUT') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+      return handleSaveSettings(request, env, auth!.userId);
+    }
+
+    // Delete setting
+    if (path.match(/^\/api\/settings\/[\w-]+$/) && method === 'DELETE') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+      const provider = path.split('/').pop()!;
+      return handleDeleteSetting(env, auth!.userId, provider);
+    }
+
+    // ==================== PROJECT ROUTES (Protected) ====================
 
     // Create a new project
     if (path === '/api/projects' && method === 'POST') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const body = await request.json() as CreateProjectRequest;
 
       if (!body.name || !body.scenes || body.scenes.length === 0) {
@@ -72,16 +144,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         updatedAt: new Date().toISOString(),
       };
 
-      // Store project in KV
-      await env.CACHE.put(`project:${project.id}`, JSON.stringify(project));
+      // Store project in KV with user prefix
+      await env.CACHE.put(`user:${auth!.userId}:project:${project.id}`, JSON.stringify(project));
 
       return jsonResponse({ success: true, data: project }, 201);
     }
 
     // Get a project
     if (path.match(/^\/api\/projects\/[\w-]+$/) && method === 'GET') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const projectId = path.split('/').pop()!;
-      const projectData = await env.CACHE.get(`project:${projectId}`);
+      const projectData = await env.CACHE.get(`user:${auth!.userId}:project:${projectId}`);
 
       if (!projectData) {
         return jsonResponse({ success: false, error: 'Project not found' }, 404);
@@ -91,9 +166,12 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return jsonResponse({ success: true, data: project });
     }
 
-    // List all projects
+    // List all projects for user
     if (path === '/api/projects' && method === 'GET') {
-      const list = await env.CACHE.list({ prefix: 'project:' });
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
+      const list = await env.CACHE.list({ prefix: `user:${auth!.userId}:project:` });
       const projects: Project[] = [];
 
       for (const key of list.keys) {
@@ -106,12 +184,15 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return jsonResponse({ success: true, data: projects });
     }
 
-    // === VIDEO GENERATION ENDPOINTS ===
+    // ==================== VIDEO GENERATION ROUTES (Protected) ====================
 
     // Start video generation for a project
     if (path.match(/^\/api\/projects\/[\w-]+\/generate$/) && method === 'POST') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const projectId = path.split('/')[3];
-      const projectData = await env.CACHE.get(`project:${projectId}`);
+      const projectData = await env.CACHE.get(`user:${auth!.userId}:project:${projectId}`);
 
       if (!projectData) {
         return jsonResponse({ success: false, error: 'Project not found' }, 404);
@@ -131,6 +212,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         body: JSON.stringify({
           jobId,
           projectId: project.id,
+          userId: auth!.userId,
           scenes: project.scenes,
         }),
       }));
@@ -146,8 +228,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       }));
 
       // Store job reference
-      await env.CACHE.put(`job:${jobId}`, JSON.stringify({ projectId, jobId }));
-      await env.CACHE.put(`project:${projectId}:currentJob`, jobId);
+      await env.CACHE.put(`user:${auth!.userId}:job:${jobId}`, JSON.stringify({ projectId, jobId }));
+      await env.CACHE.put(`user:${auth!.userId}:project:${projectId}:currentJob`, jobId);
 
       return jsonResponse({
         success: true,
@@ -162,7 +244,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     // Get job status
     if (path.match(/^\/api\/jobs\/[\w-]+$/) && method === 'GET') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const jobId = path.split('/').pop()!;
+
+      // Verify user owns this job
+      const jobData = await env.CACHE.get(`user:${auth!.userId}:job:${jobId}`);
+      if (!jobData) {
+        return jsonResponse({ success: false, error: 'Job not found' }, 404);
+      }
 
       // Get Durable Object stub
       const doId = env.VIDEO_JOB.idFromName(jobId);
@@ -183,8 +274,11 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     // Get current job for a project
     if (path.match(/^\/api\/projects\/[\w-]+\/job$/) && method === 'GET') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const projectId = path.split('/')[3];
-      const jobId = await env.CACHE.get(`project:${projectId}:currentJob`);
+      const jobId = await env.CACHE.get(`user:${auth!.userId}:project:${projectId}:currentJob`);
 
       if (!jobId) {
         return jsonResponse({ success: false, error: 'No active job for this project' }, 404);
@@ -203,7 +297,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return jsonResponse({ success: true, data: state });
     }
 
-    // === TEMPLATE ENDPOINTS ===
+    // ==================== TEMPLATE ROUTES (Public for viewing, Protected for creating) ====================
 
     // Get Hamza Labs template
     if (path === '/api/templates/hamza-labs' && method === 'GET') {
@@ -222,6 +316,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     // Create project from Hamza Labs template
     if (path === '/api/templates/hamza-labs/create' && method === 'POST') {
+      const authError = requireAuth(auth);
+      if (authError) return authError;
+
       const { HAMZA_LABS_SCENES } = await import('./data/scenes');
 
       const project: Project = {
@@ -233,7 +330,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         updatedAt: new Date().toISOString(),
       };
 
-      await env.CACHE.put(`project:${project.id}`, JSON.stringify(project));
+      await env.CACHE.put(`user:${auth!.userId}:project:${project.id}`, JSON.stringify(project));
 
       return jsonResponse({ success: true, data: project }, 201);
     }

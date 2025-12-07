@@ -1,8 +1,17 @@
 import React from "react";
-import { Link, Outlet } from "react-router-dom";
+import { Link, Outlet, useNavigate } from "react-router-dom";
 import { cn } from "../lib/utils";
+import { useAuth } from "../hooks/useAuth";
 
 const RootLayout: React.FC = () => {
+  const { user, isAuthenticated, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
   return (
     <div className="min-h-screen bg-black text-gray-100 flex flex-col">
       {/* Navigation Header */}
@@ -33,24 +42,55 @@ const RootLayout: React.FC = () => {
 
             {/* Navigation Links */}
             <nav className="flex items-center space-x-6">
-              <Link
-                to="/"
-                className={cn(
-                  "text-sm font-medium transition-colors hover:text-blue-400",
-                  "text-gray-300"
-                )}
-              >
-                New Project
-              </Link>
-              <Link
-                to="/settings"
-                className={cn(
-                  "text-sm font-medium transition-colors hover:text-blue-400",
-                  "text-gray-300"
-                )}
-              >
-                Settings
-              </Link>
+              {isAuthenticated ? (
+                <>
+                  <Link
+                    to="/"
+                    className={cn(
+                      "text-sm font-medium transition-colors hover:text-blue-400",
+                      "text-gray-300"
+                    )}
+                  >
+                    New Project
+                  </Link>
+                  <Link
+                    to="/settings"
+                    className={cn(
+                      "text-sm font-medium transition-colors hover:text-blue-400",
+                      "text-gray-300"
+                    )}
+                  >
+                    Settings
+                  </Link>
+                  <div className="flex items-center space-x-4 border-l border-gray-700 pl-6">
+                    <span className="text-sm text-gray-400">{user?.email}</span>
+                    <button
+                      onClick={handleLogout}
+                      className="text-sm font-medium text-gray-400 hover:text-red-400 transition-colors"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Link
+                    to="/login"
+                    className={cn(
+                      "text-sm font-medium transition-colors hover:text-blue-400",
+                      "text-gray-300"
+                    )}
+                  >
+                    Sign In
+                  </Link>
+                  <Link
+                    to="/signup"
+                    className="text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+                  >
+                    Sign Up
+                  </Link>
+                </>
+              )}
             </nav>
           </div>
         </div>

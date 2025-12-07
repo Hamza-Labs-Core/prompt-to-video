@@ -3,8 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../co
 import Input from "../components/ui/Input";
 import Select from "../components/ui/Select";
 import Button from "../components/ui/Button";
-import { useConfig } from "../hooks/useConfig";
-import { PROVIDER_MODELS } from "../stores/configStore";
+import { useSettings } from "../hooks/useSettings";
 
 interface OpenRouterModel {
   id: string;
@@ -15,6 +14,14 @@ interface OpenRouterModel {
   };
   context_length: number;
 }
+
+const LLM_PROVIDER_OPTIONS = [
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "workers-ai", label: "Cloudflare Workers AI" },
+  { value: "google", label: "Google Gemini" },
+];
 
 const IMAGE_PROVIDER_OPTIONS = [
   { value: "fal-flux", label: "fal.ai Flux" },
@@ -43,58 +50,88 @@ const VIDEO_QUALITY_OPTIONS = [
   { value: "pro", label: "Pro" },
 ];
 
+const STATIC_LLM_MODELS: Record<string, Array<{ value: string; label: string }>> = {
+  'openai': [
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+  ],
+  'anthropic': [
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+  ],
+  'workers-ai': [
+    { value: '@cf/meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B' },
+    { value: '@cf/meta/llama-3.1-70b-instruct', label: 'Llama 3.1 70B' },
+  ],
+  'google': [
+    { value: 'gemini-pro-1.5', label: 'Gemini Pro 1.5' },
+    { value: 'gemini-flash-1.5', label: 'Gemini Flash 1.5' },
+  ],
+};
+
 const SettingsPage: React.FC = () => {
-  const config = useConfig();
+  const { settings, isLoading, saveSettings, isSaving } = useSettings();
 
-  // LLM State
-  const [llmProvider, setLlmProvider] = useState(config.llmProvider);
-  const [llmApiKey, setLlmApiKey] = useState(config.llmApiKey);
-  const [llmModel, setLlmModel] = useState(config.llmModel);
+  // Form state - starts empty, populated from server
+  const [llmProvider, setLlmProvider] = useState("openrouter");
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmModel, setLlmModel] = useState("anthropic/claude-3.5-sonnet");
 
-  // Image State
-  const [imageProvider, setImageProvider] = useState(config.imageProvider);
-  const [imageApiKey, setImageApiKey] = useState(config.imageApiKey);
+  const [imageProvider, setImageProvider] = useState("fal-flux");
+  const [imageApiKey, setImageApiKey] = useState("");
 
-  // Video State
-  const [videoProvider, setVideoProvider] = useState(config.videoProvider);
-  const [videoApiKey, setVideoApiKey] = useState(config.videoApiKey);
-  const [videoQuality, setVideoQuality] = useState(config.videoQuality);
+  const [videoProvider, setVideoProvider] = useState("fal-kling");
+  const [videoApiKey, setVideoApiKey] = useState("");
+  const [videoQuality, setVideoQuality] = useState<"standard" | "pro">("standard");
 
-  // Compile State
-  const [compileProvider, setCompileProvider] = useState(config.compileProvider);
-  const [compileApiKey, setCompileApiKey] = useState(config.compileApiKey);
+  const [compileProvider, setCompileProvider] = useState("none");
+  const [compileApiKey, setCompileApiKey] = useState("");
 
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [testResults, setTestResults] = useState<Record<string, string>>({});
+  const [saveError, setSaveError] = useState("");
 
   // OpenRouter models state
   const [openRouterModels, setOpenRouterModels] = useState<Array<{ value: string; label: string }>>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState<string | null>(null);
+
+  // Populate form from settings when loaded
+  useEffect(() => {
+    if (settings) {
+      if (settings.llm.providerName) setLlmProvider(settings.llm.providerName);
+      if (settings.llm.model) setLlmModel(settings.llm.model);
+      if (settings.image.providerName) setImageProvider(settings.image.providerName);
+      if (settings.video.providerName) setVideoProvider(settings.video.providerName);
+      if (settings.video.extraConfig?.quality) {
+        setVideoQuality(settings.video.extraConfig.quality as "standard" | "pro");
+      }
+      if (settings.compile.providerName) setCompileProvider(settings.compile.providerName);
+    }
+  }, [settings]);
 
   // Fetch OpenRouter models on mount
   useEffect(() => {
     const fetchOpenRouterModels = async () => {
       setModelsLoading(true);
-      setModelsError(null);
       try {
         const response = await fetch("https://openrouter.ai/api/v1/models");
-        if (!response.ok) {
-          throw new Error("Failed to fetch models");
-        }
+        if (!response.ok) throw new Error("Failed to fetch models");
         const data = await response.json();
         const models = (data.data as OpenRouterModel[])
-          .filter((m) => m.context_length >= 4000) // Filter for reasonable context
+          .filter((m) => m.context_length >= 4000)
           .sort((a, b) => a.name.localeCompare(b.name))
           .map((model) => ({
             value: model.id,
             label: `${model.name} (${Math.round(model.context_length / 1000)}k)`,
           }));
         setOpenRouterModels(models);
-      } catch (err) {
-        setModelsError(err instanceof Error ? err.message : "Failed to load models");
-        // Fallback to static list
-        setOpenRouterModels(PROVIDER_MODELS.openrouter);
+      } catch {
+        // Fallback
+        setOpenRouterModels([
+          { value: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+          { value: 'openai/gpt-4o', label: 'GPT-4o' },
+        ]);
       } finally {
         setModelsLoading(false);
       }
@@ -103,55 +140,68 @@ const SettingsPage: React.FC = () => {
     fetchOpenRouterModels();
   }, []);
 
-  // Get available models for current LLM provider
-  const llmProviderOptions = [
-    { value: "openrouter", label: "OpenRouter" },
-    { value: "openai", label: "OpenAI" },
-    { value: "anthropic", label: "Anthropic" },
-    { value: "workers-ai", label: "Cloudflare Workers AI" },
-    { value: "google", label: "Google Gemini" },
-  ];
-
-  const availableModels = llmProvider === "openrouter"
-    ? openRouterModels
-    : (PROVIDER_MODELS[llmProvider as keyof typeof PROVIDER_MODELS] || []);
-
-  const handleSave = () => {
-    config.setLLMConfig(llmProvider as any, llmApiKey, llmModel);
-    config.setImageConfig(imageProvider as any, imageApiKey);
-    config.setVideoConfig(videoProvider as any, videoApiKey, videoQuality);
-    config.setCompileConfig(compileProvider as any, compileApiKey);
-
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
+  const getAvailableModels = () => {
+    if (llmProvider === "openrouter") {
+      return openRouterModels.length > 0 ? openRouterModels : [{ value: "", label: "Loading..." }];
+    }
+    return STATIC_LLM_MODELS[llmProvider] || [];
   };
 
-  const handleTestConnection = async (provider: string) => {
-    setTestResults({ ...testResults, [provider]: "testing" });
+  const handleSave = async () => {
+    setSaveError("");
+    setSaveSuccess(false);
 
-    // Simulate API test (replace with actual API calls)
-    setTimeout(() => {
-      setTestResults({
-        ...testResults,
-        [provider]: "success",
-      });
+    try {
+      const settingsToSave = [
+        {
+          provider: 'llm' as const,
+          apiKey: llmApiKey,
+          providerName: llmProvider,
+          model: llmModel,
+        },
+        {
+          provider: 'image' as const,
+          apiKey: imageApiKey,
+          providerName: imageProvider,
+        },
+        {
+          provider: 'video' as const,
+          apiKey: videoApiKey,
+          providerName: videoProvider,
+          extraConfig: { quality: videoQuality },
+        },
+        {
+          provider: 'compile' as const,
+          apiKey: compileApiKey,
+          providerName: compileProvider,
+        },
+      ];
 
-      setTimeout(() => {
-        setTestResults((prev) => {
-          const newResults = { ...prev };
-          delete newResults[provider];
-          return newResults;
-        });
-      }, 3000);
-    }, 1500);
-  };
+      await saveSettings(settingsToSave);
+      setSaveSuccess(true);
 
-  const handleClear = () => {
-    if (confirm("Are you sure you want to clear all API keys?")) {
-      config.clearConfig();
-      window.location.reload();
+      // Clear API key fields after save (they're now stored securely on server)
+      setLlmApiKey("");
+      setImageApiKey("");
+      setVideoApiKey("");
+      setCompileApiKey("");
+
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save settings");
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="text-center py-12">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-600 border-t-blue-500 mb-4" />
+          <p className="text-gray-400">Loading settings...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -160,7 +210,7 @@ const SettingsPage: React.FC = () => {
           API Configuration
         </h1>
         <p className="text-gray-400 text-lg">
-          Bring your own API keys for complete control over costs and provider selection
+          Your API keys are encrypted and stored securely on our servers
         </p>
       </div>
 
@@ -168,23 +218,30 @@ const SettingsPage: React.FC = () => {
         {/* LLM Provider */}
         <Card>
           <CardHeader>
-            <CardTitle>LLM Provider (Direction Generation)</CardTitle>
-            <CardDescription>
-              Used to generate creative direction and shot-by-shot plans
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>LLM Provider (Direction Generation)</CardTitle>
+                <CardDescription>
+                  Used to generate creative direction and shot-by-shot plans
+                </CardDescription>
+              </div>
+              {settings?.llm.hasKey && (
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">
+                  Configured
+                </span>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <Select
               label="Provider"
               value={llmProvider}
               onChange={(e) => {
-                const newProvider = e.target.value;
-                setLlmProvider(newProvider);
-                // Reset to default model for new provider
-                const defaultModel = PROVIDER_MODELS[newProvider as keyof typeof PROVIDER_MODELS]?.[0]?.value || "";
-                setLlmModel(defaultModel);
+                setLlmProvider(e.target.value);
+                const models = STATIC_LLM_MODELS[e.target.value];
+                if (models?.[0]) setLlmModel(models[0].value);
               }}
-              options={llmProviderOptions}
+              options={LLM_PROVIDER_OPTIONS}
             />
 
             <Input
@@ -192,7 +249,7 @@ const SettingsPage: React.FC = () => {
               type="password"
               value={llmApiKey}
               onChange={(e) => setLlmApiKey(e.target.value)}
-              placeholder={llmProvider === "workers-ai" ? "Optional for Cloudflare Workers AI" : "sk-..."}
+              placeholder={settings?.llm.hasKey ? "Enter new key to update" : "Enter API key"}
             />
 
             <div>
@@ -200,42 +257,35 @@ const SettingsPage: React.FC = () => {
                 label="Model"
                 value={llmModel}
                 onChange={(e) => setLlmModel(e.target.value)}
-                options={availableModels.length > 0 ? availableModels : [{ value: "", label: "Loading..." }]}
+                options={getAvailableModels()}
                 disabled={llmProvider === "openrouter" && modelsLoading}
               />
               {llmProvider === "openrouter" && modelsLoading && (
-                <p className="mt-1 text-xs text-gray-500">Loading models from OpenRouter...</p>
+                <p className="mt-1 text-xs text-gray-500">Loading models...</p>
               )}
-              {llmProvider === "openrouter" && modelsError && (
-                <p className="mt-1 text-xs text-yellow-500">Using fallback models: {modelsError}</p>
-              )}
-              {llmProvider === "openrouter" && !modelsLoading && !modelsError && openRouterModels.length > 0 && (
+              {llmProvider === "openrouter" && !modelsLoading && openRouterModels.length > 0 && (
                 <p className="mt-1 text-xs text-gray-500">{openRouterModels.length} models available</p>
               )}
             </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTestConnection("llm")}
-              disabled={testResults.llm === "testing"}
-            >
-              {testResults.llm === "testing"
-                ? "Testing..."
-                : testResults.llm === "success"
-                ? "Connection Successful"
-                : "Test Connection"}
-            </Button>
           </CardContent>
         </Card>
 
         {/* Image Provider */}
         <Card>
           <CardHeader>
-            <CardTitle>Image Provider</CardTitle>
-            <CardDescription>
-              Used to generate start and end frames for each video shot
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Image Provider</CardTitle>
+                <CardDescription>
+                  Used to generate start and end frames for each video shot
+                </CardDescription>
+              </div>
+              {settings?.image.hasKey && (
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">
+                  Configured
+                </span>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <Select
@@ -250,31 +300,27 @@ const SettingsPage: React.FC = () => {
               type="password"
               value={imageApiKey}
               onChange={(e) => setImageApiKey(e.target.value)}
-              placeholder="Enter API key"
+              placeholder={settings?.image.hasKey ? "Enter new key to update" : "Enter API key"}
             />
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTestConnection("image")}
-              disabled={testResults.image === "testing"}
-            >
-              {testResults.image === "testing"
-                ? "Testing..."
-                : testResults.image === "success"
-                ? "Connection Successful"
-                : "Test Connection"}
-            </Button>
           </CardContent>
         </Card>
 
         {/* Video Provider */}
         <Card>
           <CardHeader>
-            <CardTitle>Video Provider</CardTitle>
-            <CardDescription>
-              Used to generate video clips from start/end frames
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Video Provider</CardTitle>
+                <CardDescription>
+                  Used to generate video clips from start/end frames
+                </CardDescription>
+              </div>
+              {settings?.video.hasKey && (
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">
+                  Configured
+                </span>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <Select
@@ -289,7 +335,7 @@ const SettingsPage: React.FC = () => {
               type="password"
               value={videoApiKey}
               onChange={(e) => setVideoApiKey(e.target.value)}
-              placeholder="Enter API key"
+              placeholder={settings?.video.hasKey ? "Enter new key to update" : "Enter API key"}
             />
 
             <Select
@@ -298,29 +344,25 @@ const SettingsPage: React.FC = () => {
               onChange={(e) => setVideoQuality(e.target.value as "standard" | "pro")}
               options={VIDEO_QUALITY_OPTIONS}
             />
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTestConnection("video")}
-              disabled={testResults.video === "testing"}
-            >
-              {testResults.video === "testing"
-                ? "Testing..."
-                : testResults.video === "success"
-                ? "Connection Successful"
-                : "Test Connection"}
-            </Button>
           </CardContent>
         </Card>
 
         {/* Compilation Provider */}
         <Card>
           <CardHeader>
-            <CardTitle>Compilation Provider (Optional)</CardTitle>
-            <CardDescription>
-              Used to compile individual clips into a final video. Select "None" to receive individual clips.
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Compilation Provider (Optional)</CardTitle>
+                <CardDescription>
+                  Used to compile individual clips into a final video
+                </CardDescription>
+              </div>
+              {settings?.compile.hasKey && compileProvider !== "none" && (
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">
+                  Configured
+                </span>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <Select
@@ -331,54 +373,49 @@ const SettingsPage: React.FC = () => {
             />
 
             {compileProvider !== "none" && (
-              <>
-                <Input
-                  label="API Key"
-                  type="password"
-                  value={compileApiKey}
-                  onChange={(e) => setCompileApiKey(e.target.value)}
-                  placeholder="Enter API key"
-                />
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleTestConnection("compile")}
-                  disabled={testResults.compile === "testing"}
-                >
-                  {testResults.compile === "testing"
-                    ? "Testing..."
-                    : testResults.compile === "success"
-                    ? "Connection Successful"
-                    : "Test Connection"}
-                </Button>
-              </>
+              <Input
+                label="API Key"
+                type="password"
+                value={compileApiKey}
+                onChange={(e) => setCompileApiKey(e.target.value)}
+                placeholder={settings?.compile.hasKey ? "Enter new key to update" : "Enter API key"}
+              />
             )}
           </CardContent>
         </Card>
 
-        {/* Actions */}
-        <div className="flex justify-between items-center">
-          <Button variant="ghost" onClick={handleClear}>
-            Clear All
-          </Button>
-
-          <Button variant="primary" size="lg" onClick={handleSave}>
-            Save Configuration
-          </Button>
-        </div>
-
-        {saveSuccess && (
-          <div className="p-4 bg-green-500/10 border border-green-500/50 rounded-lg">
-            <p className="text-green-400 text-sm text-center">Configuration saved successfully!</p>
+        {/* Error Message */}
+        {saveError && (
+          <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg">
+            <p className="text-red-400 text-sm">{saveError}</p>
           </div>
         )}
 
-        {/* Info Box */}
+        {/* Success Message */}
+        {saveSuccess && (
+          <div className="p-4 bg-green-500/10 border border-green-500/50 rounded-lg">
+            <p className="text-green-400 text-sm text-center">Settings saved securely!</p>
+          </div>
+        )}
+
+        {/* Save Button */}
+        <div className="flex justify-end">
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={handleSave}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save Configuration"}
+          </Button>
+        </div>
+
+        {/* Security Info */}
         <div className="p-4 bg-blue-500/10 border border-blue-500/50 rounded-lg">
           <p className="text-blue-400 text-sm">
-            <strong>Note:</strong> Your API keys are stored locally in your browser and never sent to
-            our servers. They are only used to make direct API calls to your chosen providers.
+            <strong>Security:</strong> Your API keys are encrypted with AES-256-GCM using a
+            key derived from your account. They are stored securely on Cloudflare's edge
+            network and only decrypted when making API calls on your behalf.
           </p>
         </div>
       </div>

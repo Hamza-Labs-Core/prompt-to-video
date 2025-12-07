@@ -4,13 +4,18 @@ export interface Env {
   MEDIA_BUCKET: R2Bucket;
   CACHE: KVNamespace;
   ASSETS: Fetcher;
+  DB: D1Database;
 
   // Secrets (set via wrangler secret put)
-  FAL_API_KEY: string;
-  CREATOMATE_API_KEY: string;
+  JWT_SECRET: string;
+  ENCRYPTION_KEY: string;
+  FAL_API_KEY?: string; // Now optional, per-user keys preferred
+  CREATOMATE_API_KEY?: string; // Now optional, per-user keys preferred
 
   // Variables
   ENVIRONMENT: string;
+  JWT_EXPIRY?: string;
+  REFRESH_EXPIRY?: string;
 }
 
 // Scene definition

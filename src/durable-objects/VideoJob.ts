@@ -155,12 +155,43 @@ export class VideoJob extends DurableObject<Env> {
   }
 
   /**
+   * Get FAL API key from job config or environment
+   */
+  private getFalApiKey(): string {
+    const apiKeyResult = this.ctx.storage.sql.exec(
+      `SELECT value FROM job_config WHERE key = 'falApiKey'`
+    ).one() as { value: string } | null;
+
+    const falApiKey = apiKeyResult?.value || this.env.FAL_API_KEY;
+    if (!falApiKey) {
+      throw new Error('FAL API key not configured. Please add it in Settings.');
+    }
+    return falApiKey;
+  }
+
+  /**
+   * Get Creatomate API key from job config or environment
+   */
+  private getCreatomateApiKey(): string {
+    const apiKeyResult = this.ctx.storage.sql.exec(
+      `SELECT value FROM job_config WHERE key = 'creatomateApiKey'`
+    ).one() as { value: string } | null;
+
+    const apiKey = apiKeyResult?.value || this.env.CREATOMATE_API_KEY;
+    if (!apiKey) {
+      throw new Error('Creatomate API key not configured. Please add it in Settings.');
+    }
+    return apiKey;
+  }
+
+  /**
    * Generate all start and end images for each scene
    */
   private async generateImages(scenes: Scene[], aspectRatio: '16:9' | '9:16' | '1:1'): Promise<void> {
     if (!this.state) throw new Error('Job not initialized');
 
-    const fal = new FalService(this.env.FAL_API_KEY);
+    const falApiKey = this.getFalApiKey();
+    const fal = new FalService(falApiKey);
 
     try {
       // Generate images for each scene (in sequence to avoid rate limits)
@@ -205,7 +236,8 @@ export class VideoJob extends DurableObject<Env> {
   private async startVideoGeneration(scenes: Scene[], aspectRatio: '16:9' | '9:16' | '1:1'): Promise<void> {
     if (!this.state) throw new Error('Job not initialized');
 
-    const fal = new FalService(this.env.FAL_API_KEY);
+    const falApiKey = this.getFalApiKey();
+    const fal = new FalService(falApiKey);
 
     this.state.status = 'generating_videos';
     await this.saveState();
@@ -265,7 +297,8 @@ export class VideoJob extends DurableObject<Env> {
       return;
     }
 
-    const fal = new FalService(this.env.FAL_API_KEY);
+    const falApiKey = this.getFalApiKey();
+    const fal = new FalService(falApiKey);
 
     try {
       let allComplete = true;
@@ -327,7 +360,8 @@ export class VideoJob extends DurableObject<Env> {
     this.state.status = 'compiling';
     await this.saveState();
 
-    const creatomate = new CreatomateService(this.env.CREATOMATE_API_KEY);
+    const creatomateApiKey = this.getCreatomateApiKey();
+    const creatomate = new CreatomateService(creatomateApiKey);
 
     try {
       // Get all video URLs in order
@@ -374,7 +408,8 @@ export class VideoJob extends DurableObject<Env> {
   private async pollRenderCompletion(renderId: string): Promise<void> {
     if (!this.state) return;
 
-    const creatomate = new CreatomateService(this.env.CREATOMATE_API_KEY);
+    const creatomateApiKey = this.getCreatomateApiKey();
+    const creatomate = new CreatomateService(creatomateApiKey);
 
     const maxAttempts = 60; // 30 minutes max
     let attempts = 0;

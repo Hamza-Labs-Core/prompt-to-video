@@ -13,6 +13,12 @@ bindings = [
 tag = "v1"
 new_sqlite_classes = ["VideoJob"]
 
+# D1 database for users and settings
+[[d1_databases]]
+binding = "DB"
+database_name = "prompt-to-video-db"
+database_id = "local" # Replace with actual ID after: wrangler d1 create prompt-to-video-db
+
 # R2 bucket for storing images and videos
 [[r2_buckets]]
 binding = "MEDIA_BUCKET"
@@ -32,11 +38,17 @@ not_found_handling = "single-page-application"
 # Environment variables (secrets set via wrangler secret)
 [vars]
 ENVIRONMENT = "development"
+JWT_EXPIRY = "3600"
+REFRESH_EXPIRY = "604800"
+
+# Secrets to set via: wrangler secret put <NAME>
+# - JWT_SECRET: Random 256-bit key for signing JWTs
+# - ENCRYPTION_KEY: Master key for encrypting API keys
 
 # Development overrides
 [env.development]
-vars = { ENVIRONMENT = "development" }
+vars = { ENVIRONMENT = "development", JWT_EXPIRY = "3600", REFRESH_EXPIRY = "604800" }
 
 # Production overrides
 [env.production]
-vars = { ENVIRONMENT = "production" }
+vars = { ENVIRONMENT = "production", JWT_EXPIRY = "3600", REFRESH_EXPIRY = "604800" }
