@@ -1,0 +1,2 @@
+# Exclude example.ts from builds (Node.js-specific)
+example.ts

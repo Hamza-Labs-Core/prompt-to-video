@@ -1,0 +1,42 @@
+name = "prompt-to-video"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Durable Objects for job orchestration
+[durable_objects]
+bindings = [
+  { name = "VIDEO_JOB", class_name = "VideoJob" }
+]
+
+# SQLite-backed storage for Durable Objects
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VideoJob"]
+
+# R2 bucket for storing images and videos
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "prompt-to-video-media"
+
+# KV namespace for caching and quick lookups
+[[kv_namespaces]]
+binding = "CACHE"
+id = "prompt-to-video-cache"
+
+# Static assets configuration
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Environment variables (secrets set via wrangler secret)
+[vars]
+ENVIRONMENT = "development"
+
+# Development overrides
+[env.development]
+vars = { ENVIRONMENT = "development" }
+
+# Production overrides
+[env.production]
+vars = { ENVIRONMENT = "production" }
